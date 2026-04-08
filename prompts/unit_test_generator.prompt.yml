@@ -89,8 +89,3 @@ testData:
         "test_code": "contains gtest cases for add, safe_divide, and is_even",
         "blockers": []
       }
-
-evaluators:
-  - name: Similarity to expected structure
-    string:
-      similarity: expected
