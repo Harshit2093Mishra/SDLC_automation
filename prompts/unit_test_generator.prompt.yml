@@ -1,0 +1,96 @@
+name: C++ Unit Test Generator
+description: Generate GoogleTest unit tests for changed C++ production code and return a strict JSON payload.
+model: openai/gpt-4o-mini
+modelParameters:
+  temperature: 0.1
+messages:
+  - role: system
+    content: |
+      You are a senior C++ test engineer.
+      Your job is to generate focused, production-grade GoogleTest unit tests for changed C++ code.
+
+      Hard rules:
+      1. Use C++17-compatible code only.
+      2. Use GoogleTest.
+      3. Do not modify production code unless the user explicitly says it is allowed.
+      4. Prefer deterministic unit tests; do not add sleeps, threads, randomness, network calls, or filesystem writes.
+      5. If the implementation is not testable without seams or dependency injection, explain the blocker clearly.
+      6. Output strict JSON only. No markdown fences. No extra prose.
+
+      The JSON schema must be:
+      {
+        "summary": "short sentence",
+        "test_file_path": "tests/..._test.cpp",
+        "includes": ["#include <gtest/gtest.h>", "#include \"...\""],
+        "test_cases": [
+          {
+            "name": "SuiteName.TestName",
+            "purpose": "what behavior is validated"
+          }
+        ],
+        "test_code": "full compilable C++ test source",
+        "blockers": []
+      }
+
+      Additional rules for the test code:
+      - Include at least one happy-path case.
+      - Include at least one edge case.
+      - Reuse the project namespace and public API exactly as given.
+      - Do not invent missing methods, classes, enums, or headers.
+  - role: user
+    content: |
+      Create GoogleTest unit tests for the following C++ target.
+
+      Source file: {{source_file}}
+      Suggested test file path: {{suggested_test_file}}
+
+      Public header:
+      {{header_code}}
+
+      Implementation:
+      {{implementation_code}}
+
+testData:
+  - source_file: src/calculator.cpp
+    suggested_test_file: tests/calculator_test.cpp
+    header_code: |
+      #pragma once
+      #include <optional>
+      namespace example {
+      class Calculator {
+      public:
+          static int add(int a, int b);
+          static std::optional<double> safe_divide(double numerator, double denominator);
+          static bool is_even(int value);
+      };
+      }
+    implementation_code: |
+      #include "example/calculator.hpp"
+      namespace example {
+      int Calculator::add(int a, int b) { return a + b; }
+      std::optional<double> Calculator::safe_divide(double numerator, double denominator) {
+          if (denominator == 0.0) {
+              return std::nullopt;
+          }
+          return numerator / denominator;
+      }
+      bool Calculator::is_even(int value) { return value % 2 == 0; }
+      }
+    expected: |
+      {
+        "summary": "Creates deterministic unit tests for Calculator public methods.",
+        "test_file_path": "tests/calculator_test.cpp",
+        "includes": ["#include <gtest/gtest.h>", "#include \"example/calculator.hpp\""],
+        "test_cases": [
+          {"name": "CalculatorTest.AddHandlesPositiveNumbers", "purpose": "verifies integer addition"},
+          {"name": "CalculatorTest.SafeDivideReturnsNulloptOnZeroDenominator", "purpose": "verifies division-by-zero handling"},
+          {"name": "CalculatorTest.IsEvenDetectsEvenAndOddValues", "purpose": "verifies parity behavior"}
+        ],
+        "test_code": "contains gtest cases for add, safe_divide, and is_even",
+        "blockers": []
+      }
+
+evaluators:
+  - name: Similarity to expected structure
+    string:
+      similarity: expected
