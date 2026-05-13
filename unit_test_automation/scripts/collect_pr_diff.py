@@ -3,8 +3,8 @@
 Collect changed files for a PR/branch range and focus on C++ implementation headers.
 
 Examples:
-  python3 scripts/collect_pr_diff.py --base origin/main --head HEAD
-  python3 scripts/collect_pr_diff.py --base HEAD~1 --head HEAD --pretty
+    python3 unit_test_automation/scripts/collect_pr_diff.py --base origin/main --head HEAD
+    python3 unit_test_automation/scripts/collect_pr_diff.py --base HEAD~1 --head HEAD --pretty
 """
 
 from __future__ import annotations

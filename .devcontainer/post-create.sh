@@ -2,4 +2,4 @@
 set -euo pipefail
 
 echo "Codespace ready. Running initial validation..."
-bash scripts/validate.sh || true
+bash unit_test_automation/scripts/validate.sh || true

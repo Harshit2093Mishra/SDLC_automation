@@ -27,20 +27,20 @@ The devcontainer will install the required tooling and pre-configure the sample 
 ### 2) Build and run tests
 
 ```bash
-bash scripts/validate.sh
+bash unit_test_automation/scripts/validate.sh
 ```
 
 ### 3) Inspect changed C++ files in a branch or PR range
 
 ```bash
-python3 scripts/collect_pr_diff.py --base origin/main --head HEAD
+python3 unit_test_automation/scripts/collect_pr_diff.py --base origin/main --head HEAD
 ```
 
 ### 4) Run prompt evaluation locally (if GitHub Models is enabled)
 
 ```bash
 gh extension install github/gh-models || true
-gh models eval prompts/unit_test_generator.prompt.yml --json
+gh models eval unit_test_automation/prompts/unit_test_generator.prompt.yml --json
 ```
 
 ## Repository layout
@@ -67,10 +67,10 @@ The sample library is intentionally tiny so you can validate the workflow immedi
 
 ## How to adapt this to your real codebase
 
-1. Replace the sample `include/`, `src/`, and `tests/` folders with your real project.
+1. Replace the sample `unit_test_automation/include/`, `src/`, and `tests/` folders with your real project.
 2. Update `CMakeLists.txt` so `project_lib` points to your actual library or binary targets.
-3. Keep `scripts/collect_pr_diff.py`, `scripts/validate.sh`, the prompt files, and the workflow.
-4. When the unit test agent is ready, wire it to write new files under `tests/` and then call `scripts/validate.sh`.
+3. Keep `unit_test_automation/scripts/collect_pr_diff.py`, `unit_test_automation/scripts/validate.sh`, the prompt files, and the workflow.
+4. When the unit test agent is ready, wire it to write new files under `tests/` and then call `unit_test_automation/scripts/validate.sh`.
 
 ## Enabling Codespaces prebuilds
 

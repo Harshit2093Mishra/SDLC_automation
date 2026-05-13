@@ -23,9 +23,9 @@ jobs:
 
       - name: Run validation
         run: |
-          bash scripts/validate.sh
+          bash unit_test_automation/scripts/validate.sh
 
       - name: Collect changed C++ files (PR only)
         if: github.event_name == 'pull_request'
         run: |
-          python3 scripts/collect_pr_diff.py --base origin/${{ github.base_ref }} --head HEAD --pretty
+          python3 unit_test_automation/scripts/collect_pr_diff.py --base origin/${{ github.base_ref }} --head HEAD --pretty

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROMPT_FILE="${1:-prompts/unit_test_generator.prompt.yml}"
+PROMPT_FILE="${1:-unit_test_automation/prompts/unit_test_generator.prompt.yml}"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "gh CLI is required"
