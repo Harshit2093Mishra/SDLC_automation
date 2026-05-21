@@ -39,7 +39,7 @@ namespace example
     {
         if (manager == "Raju")
         {
-            return true;
+            return true
         }
         return false;
     }
