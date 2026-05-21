@@ -122,21 +122,23 @@ def main():
     print(json.dumps(diff, indent=2))
 
     print("[STEP 2] Generating tests for changed source files...")
-    for src in diff.get("source_files", []):
-        # `collect_pr_diff.py` returns `suggested_test_targets` as a list of
-        # {"source": ..., "suggested_test": ...} entries. Find the match.
-        suggested_test = None
-        for t in diff.get("suggested_test_targets", []):
-            if isinstance(t, dict) and t.get("source") == src:
-                suggested_test = t.get("suggested_test")
-                break
-        if not suggested_test:
-            print(f"[WARN] No suggested test file for {src}")
+    suggested_by_test = {}
+    for t in diff.get("suggested_test_targets", []):
+        if isinstance(t, dict):
+            suggested_by_test.setdefault(t.get("suggested_test"), []).append(t.get("source"))
+
+    for suggested_test, sources in suggested_by_test.items():
+        source = sources[0]
+        if len(sources) > 1:
+            print(f"[WARN] Multiple sources {sources} map to the same test target {suggested_test}; using {source}")
+        test_path = TESTS_DIR / Path(suggested_test).name
+        if test_path.exists():
+            print(f"[INFO] Existing test target {test_path} already exists; skipping generation")
             continue
         # Read code
         header_code = ""
         impl_code = ""
-        src_path = REPO_ROOT / src
+        src_path = REPO_ROOT / source
         if src_path.exists():
             impl_code = src_path.read_text()
         # Try to find header
@@ -144,9 +146,9 @@ def main():
         if header_path.exists():
             header_code = header_path.read_text()
         # LLM call
-        llm_resp = generate_test_for_source(src, suggested_test, header_code, impl_code)
+        llm_resp = generate_test_for_source(source, suggested_test, header_code, impl_code)
         if not llm_resp or "test_code" not in llm_resp:
-            print(f"[ERROR] No test_code generated for {src}")
+            print(f"[ERROR] No test_code generated for {source}")
             continue
         test_path = write_test_file(llm_resp["test_file_path"], llm_resp["test_code"])
         print(f"[INFO] Test written: {test_path}")
