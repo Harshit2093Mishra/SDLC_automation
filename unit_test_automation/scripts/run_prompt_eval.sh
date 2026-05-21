@@ -15,7 +15,7 @@ fi
 
 # If an input JSON file is provided, pipe it to gh models eval via stdin
 if [ -n "$INPUT_JSON" ] && [ -f "$INPUT_JSON" ]; then
-  cat "$INPUT_JSON" | gh models eval "$PROMPT_FILE" --json --input -
+  cat "$INPUT_JSON" | gh models eval "$PROMPT_FILE" --json
 else
   gh models eval "$PROMPT_FILE" --json
 fi

@@ -52,6 +52,10 @@ def main() -> int:
     source_files = [f for f in changed_cpp if not looks_like_test(f)]
     test_files = [f for f in changed_cpp if looks_like_test(f)]
 
+    deleted_files_output = run_git(["diff", "--name-only", "--diff-filter=D", f"{args.base}...{args.head}"])
+    deleted_files = [line.strip() for line in deleted_files_output.splitlines() if line.strip()]
+    removed_source_files = [f for f in deleted_files if Path(f).suffix.lower() in CPP_SUFFIXES and not looks_like_test(f)]
+
     payload = {
         "base": args.base,
         "head": args.head,
@@ -59,6 +63,7 @@ def main() -> int:
         "changed_cpp_files": changed_cpp,
         "source_files": source_files,
         "test_files": test_files,
+        "removed_source_files": removed_source_files,
         "suggested_test_targets": [
             {"source": src, "suggested_test": guess_test_path(src)} for src in source_files
         ],

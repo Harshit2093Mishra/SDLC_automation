@@ -25,16 +25,17 @@ namespace example
         return numerator / denominator;
     }
 
-    bool Calculator::is_even(int value)
-    {
-        return value % 2 == 0;
-    }
+    
 
     bool Calculator::is_seven(int value)
     {
         return value == 7;
     }
 
+    bool Calculator::is_chomu(std::string manager)
+    {
+        return manager == "Raju";
+    }
 
     int Calculator::minEatingSpeed(std::vector<int> &piles, int h)
     {

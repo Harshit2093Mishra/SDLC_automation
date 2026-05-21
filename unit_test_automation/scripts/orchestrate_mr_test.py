@@ -46,33 +46,97 @@ def get_diff_json(base: str, head: str):
     out = run([sys.executable, str(COLLECT_DIFF_SCRIPT), "--base", base, "--head", head])
     return json.loads(out)
 
+
+def fill_prompt_template(template_path: Path, substitutions: dict) -> Path:
+    template_text = template_path.read_text()
+    for key, value in substitutions.items():
+        template_text = template_text.replace(f"{{{{{key}}}}}", value)
+
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=template_path.suffix) as f:
+        f.write(template_text)
+        f.flush()
+        return Path(f.name)
+
+
+def guess_test_path(source_path: str) -> str:
+    source = Path(source_path)
+    return str(Path("tests") / f"{source.stem}_test.cpp")
+
+
+def get_candidate_keywords(source_path: str) -> list[str]:
+    source = Path(source_path)
+    stem = source.stem
+    candidates = {stem}
+    if stem:
+        candidates.add(stem.capitalize())
+    return sorted(candidates)
+
+
+def remove_tests_for_removed_source(test_path: Path, source_path: str) -> bool:
+    if not test_path.exists():
+        return False
+
+    keywords = get_candidate_keywords(source_path)
+    text = test_path.read_text()
+    lines = text.splitlines(keepends=True)
+    filtered_lines = []
+    removed_any = False
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("TEST("):
+            start = i
+            brace_count = 0
+            while i < len(lines):
+                brace_count += lines[i].count("{") - lines[i].count("}")
+                i += 1
+                if brace_count <= 0:
+                    break
+            block = "".join(lines[start:i])
+            if any(keyword in block for keyword in keywords):
+                removed_any = True
+                continue
+            filtered_lines.append(block)
+            continue
+
+        filtered_lines.append(lines[i])
+        i += 1
+
+    if not removed_any:
+        return False
+
+    new_text = "".join(filtered_lines).rstrip() + "\n"
+    if not new_text.strip():
+        test_path.unlink()
+        print(f"[INFO] Deleted empty test file {test_path} after removing removed-source tests.")
+        return True
+
+    test_path.write_text(new_text)
+    return True
+
+
 def generate_test_for_source(source_file, suggested_test_file, header_code, impl_code):
     """Call gh models eval with prompt template and variables. Returns LLM JSON response as dict."""
-    # Create a temporary prompt YAML by embedding the source/header/implementation
-    template_text = Path(PROMPT_TEMPLATE).read_text()
-    # Indent code blocks to fit inside the YAML block scalar in the template
     def indent_block(code: str, indent: str = "      ") -> str:
         if not code:
             return ""
         return "\n".join(indent + line for line in code.splitlines())
 
-    prompt_filled = (
-        template_text
-        .replace("{{source_file}}", str(source_file))
-        .replace("{{suggested_test_file}}", str(suggested_test_file))
-        .replace("{{header_code}}", indent_block(header_code))
-        .replace("{{implementation_code}}", indent_block(impl_code))
+    prompt_path = fill_prompt_template(
+        Path(PROMPT_TEMPLATE),
+        {
+            "source_file": str(source_file),
+            "suggested_test_file": str(suggested_test_file),
+            "header_code": indent_block(header_code),
+            "implementation_code": indent_block(impl_code),
+        },
     )
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".prompt.yml") as f:
-        f.write(prompt_filled)
-        f.flush()
-        prompt_path = f.name
-    # Call run_prompt_eval.sh (which wraps gh models eval)
-    out = run([str(EVAL_SCRIPT), prompt_path])
-    # Try to parse the returned wrapper JSON from `gh models eval`.
+    try:
+        out = run([str(EVAL_SCRIPT), str(prompt_path)])
+    finally:
+        prompt_path.unlink(missing_ok=True)
+
     try:
         wrapper = json.loads(out)
-        # `testResults` is an array; modelResponse is the inner JSON as a string.
         for entry in wrapper.get("testResults", []):
             mr = entry.get("modelResponse")
             if not mr:
@@ -80,15 +144,13 @@ def generate_test_for_source(source_file, suggested_test_file, header_code, impl
             try:
                 return json.loads(mr)
             except Exception:
-                # If modelResponse isn't pure JSON, try to extract JSON substring.
                 try:
                     start = mr.index("{")
                     end = mr.rindex("}") + 1
                     return json.loads(mr[start:end])
                 except Exception:
                     continue
-        # Fallback: try to find any JSON object in the raw output.
-        start = out.index("{" )
+        start = out.index("{")
         end = out.rindex("}") + 1
         llm_json = out[start:end]
         return json.loads(llm_json)
@@ -103,12 +165,8 @@ def write_test_file(test_file_path, test_code):
         f.write(test_code)
     return test_path
 
-def verify_source_compiles():
-    """Verify current source builds before generating tests."""
-    build_dir = REPO_ROOT / "build"
-    print("[STEP 2] Verifying source compiles before generating tests...")
-
-    config = subprocess.run(
+def configure_build(build_dir: Path):
+    return subprocess.run(
         [
             "cmake",
             "-S",
@@ -124,18 +182,16 @@ def verify_source_compiles():
         stderr=subprocess.PIPE,
         text=True,
     )
-    if config.returncode != 0:
-        print("[ERROR] Source configuration failed. Fix source code before generating tests.")
-        print(config.stderr)
-        sys.exit(config.returncode)
 
-    build = subprocess.run(
+
+def build_target(build_dir: Path, target: str):
+    return subprocess.run(
         [
             "cmake",
             "--build",
             str(build_dir),
             "--target",
-            "project_lib",
+            target,
             "--parallel",
             "--clean-first",
         ],
@@ -143,63 +199,59 @@ def verify_source_compiles():
         stderr=subprocess.PIPE,
         text=True,
     )
-    if build.returncode != 0:
-        print("[ERROR] Source compilation failed. Fix source code before generating tests.")
-        print(build.stdout)
-        print(build.stderr)
-        sys.exit(build.returncode)
-    print("[INFO] Source compiles successfully.")
 
 
-def build_and_test():
-    """Run build and tests via validate.sh. Returns (success, output)."""
-    try:
-        out = run([str(BUILD_SCRIPT)])
-        return True, out
-    except SystemExit:
-        return False, "Build or tests failed. See above."
-
-def main():
-    parser = argparse.ArgumentParser(description="Automated MR unit test generation and reporting.")
-    parser.add_argument("--mr-link", type=str, help="Merge Request/PR link (not used in MVP)")
-    parser.add_argument("--base", type=str, default="origin/main", help="Base git ref for diff")
-    parser.add_argument("--head", type=str, default="HEAD", help="Head git ref for diff")
-    args = parser.parse_args()
-
-    if build.returncode == 0:
-        print("[INFO] Source compiles successfully.")
-        return
-
-    # Build failed: attempt to get AI-assisted fixes up to 5 times
-    combined_output = (build.stdout or "") + "\n" + (build.stderr or "")
+def attempt_ai_build_fix(build_dir: Path, build_output: str) -> bool:
     print("[ERROR] Source compilation failed. Will attempt up to 5 AI-assisted fixes.")
     for attempt in range(1, 6):
         print(f"[INFO] AI fix attempt {attempt}/5: sending build output to model")
-        # prepare JSON input with build output
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as tf:
-            tf.write(json.dumps({"build_output": combined_output}))
+            json.dump({"build_output": build_output}, tf)
             tf.flush()
             input_path = tf.name
 
-        # call the eval script with the build-fix prompt and input JSON
-        try:
-            out = subprocess.run([str(EVAL_SCRIPT), str(BUILD_FIX_PROMPT), input_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        except Exception as exc:
-            print(f"[ERROR] Failed to invoke AI fixer: {exc}")
-            break
+        result = subprocess.run(
+            [str(EVAL_SCRIPT), str(BUILD_FIX_PROMPT), input_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        os.unlink(input_path)
 
-        if out.returncode != 0:
+        if result.returncode != 0:
             print("[ERROR] AI fixer failed to run. Stderr:")
-            print(out.stderr)
+            print(result.stderr)
             break
 
-        # Parse AI JSON response
         try:
-            wrapper = json.loads(out.stdout)
+            wrapper = json.loads(result.stdout)
         except Exception:
             print("[ERROR] Failed to parse AI response as JSON:")
-            print(out.stdout)
+            print(result.stdout)
             break
+
+        if wrapper.get("testResults"):
+            parsed = None
+            for entry in wrapper.get("testResults", []):
+                mr = entry.get("modelResponse") or entry.get("output")
+                if not mr:
+                    continue
+                try:
+                    parsed = json.loads(mr)
+                    break
+                except Exception:
+                    try:
+                        start = mr.index("{")
+                        end = mr.rindex("}") + 1
+                        parsed = json.loads(mr[start:end])
+                        break
+                    except Exception:
+                        continue
+            if parsed is None:
+                print("[ERROR] AI response did not contain valid JSON in modelResponse:")
+                print(result.stdout)
+                break
+            wrapper = parsed
 
         edits = wrapper.get("edits", [])
         blockers = wrapper.get("blockers", [])
@@ -209,14 +261,12 @@ def main():
             print("[AI] blockers:")
             for b in blockers:
                 print(" - ", b)
-            # If AI says it cannot fix, stop retrying
             break
 
         if not edits:
             print("[INFO] AI returned no edits; stopping attempts.")
             break
 
-        # Apply edits
         applied_any = False
         for e in edits:
             path = e.get("path")
@@ -234,36 +284,143 @@ def main():
             print("[INFO] No valid edits applied; stopping attempts.")
             break
 
-        # Re-run configure + build for next attempt
-        config = subprocess.run([
-            "cmake",
-            "-S",
-            str(REPO_ROOT),
-            "-B",
-            str(build_dir),
-            "-G",
-            "Ninja",
-            "-DCMAKE_BUILD_TYPE=Debug",
-            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        build = subprocess.run([
-            "cmake",
-            "--build",
-            str(build_dir),
-            "--target",
-            "project_lib",
-            "--parallel",
-            "--clean-first",
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        config = configure_build(build_dir)
+        if config.returncode != 0:
+            build_output = (config.stdout or "") + "\n" + (config.stderr or "")
+            print(f"[WARN] Configuration still failing after attempt {attempt}.")
+            continue
 
-        combined_output = (build.stdout or "") + "\n" + (build.stderr or "")
+        build = build_target(build_dir, "project_lib")
+        build_output = (build.stdout or "") + "\n" + (build.stderr or "")
         if build.returncode == 0:
             print("[INFO] Build fixed by AI edits.")
-            return
-        else:
-            print(f"[WARN] Build still failing after attempt {attempt}.")
+            return True
 
-    # If we reach here, AI could not fix the build in 5 attempts
+        print(f"[WARN] Build still failing after attempt {attempt}.")
+
     print("[ERROR] Build could not be fixed automatically after 5 attempts. Please inspect and retry.")
-    print(combined_output)
+    print(build_output)
+    return False
+
+
+def verify_source_compiles():
+    """Verify current source builds before generating tests."""
+    build_dir = REPO_ROOT / "build"
+    print("[STEP 2] Verifying source compiles before generating tests...")
+
+    config = configure_build(build_dir)
+    if config.returncode != 0:
+        print("[ERROR] Source configuration failed. Fix source code before generating tests.")
+        print(config.stderr)
+        if not attempt_ai_build_fix(build_dir, (config.stdout or "") + "\n" + (config.stderr or "")):
+            sys.exit(1)
+        return
+
+    build = build_target(build_dir, "project_lib")
+    if build.returncode != 0:
+        print("[ERROR] Source compilation failed. Fix source code before generating tests.")
+        if not attempt_ai_build_fix(build_dir, (build.stdout or "") + "\n" + (build.stderr or "")):
+            sys.exit(1)
+        return
+
+    print("[INFO] Source compiles successfully.")
+
+
+def build_and_test():
+    """Build the test target and run tests, separating build failure from test failures."""
+    build_dir = REPO_ROOT / "build"
+    config = configure_build(build_dir)
+    if config.returncode != 0:
+        return False, "build", (config.stdout or "") + "\n" + (config.stderr or "")
+
+    build = build_target(build_dir, "calculator_tests")
+    if build.returncode != 0:
+        build_output = (build.stdout or "") + "\n" + (build.stderr or "")
+        print("[ERROR] Test target build failed; attempting AI-assisted build fix.")
+        if attempt_ai_build_fix(build_dir, build_output):
+            build = build_target(build_dir, "calculator_tests")
+            if build.returncode != 0:
+                return False, "build", (build.stdout or "") + "\n" + (build.stderr or "")
+        else:
+            return False, "build", build_output
+
+    test = subprocess.run(
+        ["ctest", "--test-dir", str(build_dir), "--output-on-failure"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if test.returncode != 0:
+        return False, "test", (test.stdout or "") + "\n" + (test.stderr or "")
+
+    return True, "success", (test.stdout or "")
+
+def main():
+    parser = argparse.ArgumentParser(description="Automated MR unit test generation and reporting.")
+    parser.add_argument("--mr-link", type=str, help="Merge Request/PR link (not used in MVP)")
+    parser.add_argument("--base", type=str, default="origin/main", help="Base git ref for diff")
+    parser.add_argument("--head", type=str, default="HEAD", help="Head git ref for diff")
+    args = parser.parse_args()
+
+    print("[STEP 1] Collecting MR diff...")
+    diff = get_diff_json(args.base, args.head)
+    print(json.dumps(diff, indent=2))
+
+    verify_source_compiles()
+
+    removed_sources = diff.get("removed_source_files", [])
+    if removed_sources:
+        print("[STEP 2.5] Cleaning up tests for deleted source files...")
+        for removed_source in removed_sources:
+            test_path = Path(guess_test_path(removed_source))
+            if remove_tests_for_removed_source(test_path, removed_source):
+                print(f"[INFO] Removed tests for deleted source {removed_source}")
+
+    print("[STEP 3] Generating tests for changed source files...")
+    suggested_by_test = {}
+    for t in diff.get("suggested_test_targets", []):
+        if isinstance(t, dict):
+            suggested_by_test.setdefault(t.get("suggested_test"), []).append(t.get("source"))
+
+    for suggested_test, sources in suggested_by_test.items():
+        source = sources[0]
+        if len(sources) > 1:
+            print(f"[WARN] Multiple sources {sources} map to the same test target {suggested_test}; using {source}")
+        test_path = TESTS_DIR / Path(suggested_test).name
+        if test_path.exists():
+            print(f"[INFO] Existing test target {test_path} already exists; skipping generation")
+            continue
+        header_code = ""
+        impl_code = ""
+        src_path = REPO_ROOT / source
+        if not src_path.exists():
+            print(f"[INFO] Source {source} no longer exists; skipping test generation.")
+            continue
+        impl_code = src_path.read_text()
+        header_path = src_path.with_suffix(".hpp")
+        if header_path.exists():
+            header_code = header_path.read_text()
+        llm_resp = generate_test_for_source(source, suggested_test, header_code, impl_code)
+        if not llm_resp or "test_code" not in llm_resp:
+            print(f"[ERROR] No test_code generated for {source}")
+            continue
+        test_path = write_test_file(llm_resp["test_file_path"], llm_resp["test_code"])
+        print(f"[INFO] Test written: {test_path}")
+
+    print("[STEP 4] Building and running tests...")
+    success, stage, output = build_and_test()
+    if success:
+        print("[REPORT] All tests passed successfully.\n" + output)
+        return
+
+    if stage == "build":
+        print("[REPORT] Build failed. Please fix the build first.")
+        print(output)
+    else:
+        print("[REPORT] Tests failed. See output below.")
+        print(output)
     sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
