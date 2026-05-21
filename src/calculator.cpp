@@ -1,4 +1,5 @@
 #include "example/calculator.hpp"
+#include <string>
 
 namespace example
 {
@@ -25,6 +26,15 @@ namespace example
     bool Calculator::is_seven(int value)
     {
         return value == 7;
+    }
+
+    bool Calculator::is_chomu(std::string manager)
+    {
+        if (manager == "Raju")
+        {
+            return true;
+        }
+        return false;
     }
 
 } // namespace example

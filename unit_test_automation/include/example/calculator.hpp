@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 namespace example {
 
@@ -10,6 +11,7 @@ public:
     static std::optional<double> safe_divide(double numerator, double denominator);
     static bool is_even(int value);
     static bool is_seven(int value);
+    static bool is_chomu(std::string manager);
 };
 
 } // namespace example
