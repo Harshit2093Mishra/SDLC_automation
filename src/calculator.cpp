@@ -25,7 +25,10 @@ namespace example
         return numerator / denominator;
     }
 
-    
+    bool Calculator::is_even(int value)
+    {
+        return value % 2 == 0;
+    }
 
     bool Calculator::is_seven(int value)
     {
