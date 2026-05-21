@@ -35,14 +35,6 @@ namespace example
         return value == 7;
     }
 
-    bool Calculator::is_chomu(std::string manager)
-    {
-        if (manager == "Raju")
-        {
-            return true
-        }
-        return false;
-    }
 
     int Calculator::minEatingSpeed(std::vector<int> &piles, int h)
     {
