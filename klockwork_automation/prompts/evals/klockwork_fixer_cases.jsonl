@@ -1,0 +1,182 @@
+[
+  {
+    "test_id": "KLOCK_EVAL_001",
+    "category": "NPD.CHECK.CALL",
+    "title": "Null Pointer Dereference Detection",
+    "input_code": "void process() {\n  char *p = malloc(10);\n  *p = 'a';\n  free(p);\n}",
+    "expected_violations": ["NPD.CHECK.CALL"],
+    "expected_fix_includes": "if (p != NULL)",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_002",
+    "category": "RH.LEAK",
+    "title": "Resource Leak Detection",
+    "input_code": "int read_file() {\n  FILE *f = fopen(\"data.txt\", \"r\");\n  if (!f) return -1;\n  return 0;\n}",
+    "expected_violations": ["RH.LEAK"],
+    "expected_fix_includes": "fclose(f)",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_003",
+    "category": "SV.STRBO.BOUND_COPY",
+    "title": "Buffer Overflow via strcpy",
+    "input_code": "void copy_data(char *user_input) {\n  char buf[64];\n  strcpy(buf, user_input);\n}",
+    "expected_violations": ["SV.STRBO.BOUND_COPY"],
+    "expected_fix_includes": "strncpy",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_004",
+    "category": "SV.STRBO.BOUND_CAT",
+    "title": "Buffer Overflow via strcat",
+    "input_code": "void concat_strings(char *user_input) {\n  char buf[64] = \"hello\";\n  strcat(buf, user_input);\n}",
+    "expected_violations": ["SV.STRBO.BOUND_CAT"],
+    "expected_fix_includes": "strncat",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_005",
+    "category": "SV.TAINTED.CALL.LOOP_BOUND",
+    "title": "Tainted Loop Bound",
+    "input_code": "void loop_with_user_input(int user_count) {\n  char buf[256];\n  for (int i = 0; i < user_count; i++) {\n    buf[i] = 0;\n  }\n}",
+    "expected_violations": ["SV.TAINTED.CALL.LOOP_BOUND"],
+    "expected_fix_includes": "user_count < MAX",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_006",
+    "category": "SV.INTOVF.ASSIGN",
+    "title": "Integer Overflow on Assignment",
+    "input_code": "int add_values(int a, int b) {\n  int result = a + b;\n  return result;\n}",
+    "expected_violations": ["SV.INTOVF.ASSIGN"],
+    "expected_fix_includes": "INT_MAX",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_007",
+    "category": "SV.USAGERULES.FREEING_MEMORY",
+    "title": "Double Free Detection",
+    "input_code": "void double_free_bug() {\n  int *ptr = malloc(sizeof(int));\n  free(ptr);\n  free(ptr);\n}",
+    "expected_violations": ["SV.USAGERULES.FREEING_MEMORY"],
+    "expected_fix_includes": "ptr = NULL",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_008",
+    "category": "UNINIT.STACK.MUST",
+    "title": "Uninitialized Stack Variable",
+    "input_code": "void use_uninitialized() {\n  int status;\n  if (status == 0) {\n    do_work();\n  }\n}",
+    "expected_violations": ["UNINIT.STACK.MUST"],
+    "expected_fix_includes": "status = 0",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_009",
+    "category": "SV.MISRA.COMPL_RETURN",
+    "title": "Unchecked Return Value",
+    "input_code": "void remove_config() {\n  remove(\"config.txt\");\n}",
+    "expected_violations": ["SV.MISRA.COMPL_RETURN"],
+    "expected_fix_includes": "!= 0",
+    "severity": "MEDIUM"
+  },
+  {
+    "test_id": "KLOCK_EVAL_010",
+    "category": "SV.FMT_STR.GENERIC",
+    "title": "Format String Vulnerability",
+    "input_code": "void log_message(char *user_message) {\n  printf(user_message);\n}",
+    "expected_violations": ["SV.FMT_STR.GENERIC"],
+    "expected_fix_includes": "\"%s\"",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_011",
+    "category": "SV.TAINTED.ALLOC",
+    "title": "Tainted Memory Allocation Size",
+    "input_code": "char *allocate_buffer(size_t user_size) {\n  return malloc(user_size);\n}",
+    "expected_violations": ["SV.TAINTED.ALLOC"],
+    "expected_fix_includes": "MAX_ALLOC",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_012",
+    "category": "SV.BANNED.FUNCTIONS",
+    "title": "Use of Banned Function gets()",
+    "input_code": "void read_input() {\n  char buf[256];\n  gets(buf);\n}",
+    "expected_violations": ["SV.BANNED.FUNCTIONS"],
+    "expected_fix_includes": "fgets",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_013",
+    "category": "SV.BANNED.FUNCTIONS",
+    "title": "Use of Banned Function sprintf()",
+    "input_code": "void format_string() {\n  char buf[256];\n  sprintf(buf, \"User: %s\", user_name);\n}",
+    "expected_violations": ["SV.BANNED.FUNCTIONS"],
+    "expected_fix_includes": "snprintf",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_014",
+    "category": "SV.PASSWD.PLAINTEXT",
+    "title": "Plaintext Password in Code",
+    "input_code": "const char *password = \"admin123\";\nlog_info(\"Login with: %s\", password);",
+    "expected_violations": ["SV.PASSWD.PLAINTEXT"],
+    "expected_fix_includes": "secure vault",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_015",
+    "category": "SV.UNSIGNED_COMPARE.ALWAYS_TRUE",
+    "title": "Unsigned Integer Always-True Comparison",
+    "input_code": "void check_length() {\n  unsigned int len = get_length();\n  if (len >= 0) {\n    process(len);\n  }\n}",
+    "expected_violations": ["SV.UNSIGNED_COMPARE.ALWAYS_TRUE"],
+    "expected_fix_includes": "len > 0",
+    "severity": "MEDIUM"
+  },
+  {
+    "test_id": "KLOCK_EVAL_016",
+    "category": "SV.MEMSET.WRONGSIZE",
+    "title": "Incorrect memset Size Argument",
+    "input_code": "void clear_buffer() {\n  char *buf = malloc(64);\n  memset(buf, 0, sizeof(buf));\n}",
+    "expected_violations": ["SV.MEMSET.WRONGSIZE"],
+    "expected_fix_includes": "64",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_017",
+    "category": "SV.ARRAY.BOUND",
+    "title": "Out-of-Bounds Array Access",
+    "input_code": "void access_array(int index) {\n  int arr[10];\n  arr[index] = value;\n}",
+    "expected_violations": ["SV.ARRAY.BOUND"],
+    "expected_fix_includes": "index < 10",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_018",
+    "category": "SV.WRAP.INTEGEROVERFLOW",
+    "title": "Integer Wraparound Before Size Check",
+    "input_code": "char *allocate(size_t count, size_t item_size) {\n  size_t total = count * item_size;\n  return malloc(total);\n}",
+    "expected_violations": ["SV.WRAP.INTEGEROVERFLOW"],
+    "expected_fix_includes": "SIZE_MAX",
+    "severity": "HIGH"
+  },
+  {
+    "test_id": "KLOCK_EVAL_019",
+    "category": "SV.INSECURE.RAND",
+    "title": "Use of Cryptographically Weak RNG",
+    "input_code": "int generate_token() {\n  return rand();\n}",
+    "expected_violations": ["SV.INSECURE.RAND"],
+    "expected_fix_includes": "getrandom",
+    "severity": "CRITICAL"
+  },
+  {
+    "test_id": "KLOCK_EVAL_020",
+    "category": "Complex",
+    "title": "Multiple Violations in Single Function",
+    "input_code": "void complex_function(char *input, int count) {\n  char buf[64];\n  strcpy(buf, input);\n  int arr[10];\n  for (int i = 0; i < count; i++) {\n    arr[i] = i;\n  }\n  return malloc(count * sizeof(int));\n}",
+    "expected_violations": ["SV.STRBO.BOUND_COPY", "SV.TAINTED.CALL.LOOP_BOUND", "SV.ARRAY.BOUND", "SV.WRAP.INTEGEROVERFLOW"],
+    "expected_fix_includes": "strncpy, bounds check, SIZE_MAX",
+    "severity": "CRITICAL"
+  }
+]

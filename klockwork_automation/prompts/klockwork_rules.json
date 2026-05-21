@@ -1,0 +1,142 @@
+[
+    {
+        "id": "NPD.CHECK.CALL",
+        "title": "Null Pointer Dereference",
+        "description": "A pointer returned by a function may be NULL. Always check the return value before dereferencing.",
+        "bad": "char *p = malloc(10); *p = 'a';",
+        "good": "char *p = malloc(10); if (p != NULL) { *p = 'a'; }"
+    },
+    {
+        "id": "RH.LEAK",
+        "title": "Resource Leak",
+        "description": "Allocated resources such as memory, file handles, and sockets must be released on all paths including error paths.",
+        "bad": "FILE *f = fopen('data.txt', 'r'); if (!f) return -1; /* f never closed */",
+        "good": "FILE *f = fopen('data.txt', 'r'); if (!f) return -1; fread(buf, 1, sz, f); fclose(f);"
+    },
+    {
+        "id": "SV.STRBO.BOUND_COPY",
+        "title": "Buffer Overflow via String Copy",
+        "description": "Use size-bounded string functions (strncpy, strlcpy) instead of strcpy to prevent buffer overflows.",
+        "bad": "char buf[64]; strcpy(buf, user_input);",
+        "good": "char buf[64]; strncpy(buf, user_input, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\\0';"
+    },
+    {
+        "id": "SV.STRBO.BOUND_CAT",
+        "title": "Buffer Overflow via String Concatenation",
+        "description": "Use strncat instead of strcat to prevent buffer overflows during string concatenation.",
+        "bad": "char buf[64] = \"hello\"; strcat(buf, user_input);",
+        "good": "char buf[64] = \"hello\"; strncat(buf, user_input, sizeof(buf) - strlen(buf) - 1);"
+    },
+    {
+        "id": "SV.TAINTED.CALL.LOOP_BOUND",
+        "title": "Tainted Loop Bound",
+        "description": "Never use externally-supplied data directly as a loop bound. Validate or clamp to a safe maximum first.",
+        "bad": "for (int i = 0; i < user_count; i++) { buf[i] = 0; }",
+        "good": "int n = (user_count < MAX_COUNT) ? user_count : MAX_COUNT; for (int i = 0; i < n; i++) { buf[i] = 0; }"
+    },
+    {
+        "id": "SV.INTOVF.ASSIGN",
+        "title": "Integer Overflow on Assignment",
+        "description": "Check for integer overflow before performing arithmetic operations on signed integers.",
+        "bad": "int result = a + b;",
+        "good": "if (a > 0 && b > INT_MAX - a) { /* handle overflow */ } else { int result = a + b; }"
+    },
+    {
+        "id": "SV.USAGERULES.FREEING_MEMORY",
+        "title": "Double Free / Use After Free",
+        "description": "Set pointer to NULL immediately after freeing. Never call free() on the same pointer twice.",
+        "bad": "free(ptr); free(ptr);",
+        "good": "free(ptr); ptr = NULL;"
+    },
+    {
+        "id": "UNINIT.STACK.MUST",
+        "title": "Uninitialized Stack Variable",
+        "description": "All local variables must be explicitly initialized before use to avoid undefined behavior.",
+        "bad": "int status; if (status == 0) { do_work(); }",
+        "good": "int status = 0; if (status == 0) { do_work(); }"
+    },
+    {
+        "id": "SV.MISRA.COMPL_RETURN",
+        "title": "Unchecked Return Value",
+        "description": "The return value of functions that signal errors must always be checked.",
+        "bad": "remove('config.txt');",
+        "good": "if (remove('config.txt') != 0) { perror('remove failed'); }"
+    },
+    {
+        "id": "SV.FMT_STR.GENERIC",
+        "title": "Format String Vulnerability",
+        "description": "Never pass user-controlled data directly as a printf-family format string.",
+        "bad": "printf(user_message);",
+        "good": "printf(\"%s\", user_message);"
+    },
+    {
+        "id": "SV.TAINTED.ALLOC",
+        "title": "Tainted Memory Allocation Size",
+        "description": "Never use unvalidated external input directly as an allocation size. Validate bounds first.",
+        "bad": "char *buf = malloc(user_size);",
+        "good": "if (user_size == 0 || user_size > MAX_ALLOC) { return -1; } char *buf = malloc(user_size);"
+    },
+    {
+        "id": "SV.BANNED.FUNCTIONS",
+        "title": "Use of Banned / Unsafe Functions",
+        "description": "Avoid banned unsafe C functions: gets, sprintf, scanf without width, strcpy, strcat.",
+        "bad": "gets(buf); sprintf(out, fmt, arg);",
+        "good": "fgets(buf, sizeof(buf), stdin); snprintf(out, sizeof(out), fmt, arg);"
+    },
+    {
+        "id": "SV.PASSWD.PLAINTEXT",
+        "title": "Plaintext Password in Code or Log",
+        "description": "Passwords must never be hardcoded, stored in plaintext, or written to logs.",
+        "bad": "char *password = \"admin123\"; log_info(\"Password: %s\", password);",
+        "good": "/* Load password from secure vault; never log credentials */"
+    },
+    {
+        "id": "SV.RACE.CONDITION",
+        "title": "TOCTOU Race Condition",
+        "description": "Do not check a file's existence or permissions and then open it in separate steps. Use atomic operations.",
+        "bad": "if (access(path, W_OK) == 0) { fd = open(path, O_WRONLY); }",
+        "good": "fd = open(path, O_WRONLY); if (fd < 0) { perror('open'); return -1; }"
+    },
+    {
+        "id": "SV.UNSIGNED_COMPARE.ALWAYS_TRUE",
+        "title": "Unsigned Integer Always-True Comparison",
+        "description": "Comparing an unsigned integer with a negative constant is always true and indicates a logic error.",
+        "bad": "unsigned int len = get_length(); if (len >= 0) { process(len); }",
+        "good": "unsigned int len = get_length(); if (len > 0 && len < MAX_LEN) { process(len); }"
+    },
+    {
+        "id": "SV.MEMSET.WRONGSIZE",
+        "title": "Incorrect memset Size Argument",
+        "description": "Always pass the size of the buffer (not the size of the pointer) to memset.",
+        "bad": "char *buf = malloc(64); memset(buf, 0, sizeof(buf)); /* sizeof pointer, not buffer */",
+        "good": "char *buf = malloc(64); if (buf) { memset(buf, 0, 64); }"
+    },
+    {
+        "id": "SV.ARRAY.BOUND",
+        "title": "Out-of-Bounds Array Access",
+        "description": "Always validate array indices against the array size before accessing elements.",
+        "bad": "int arr[10]; arr[index] = value;",
+        "good": "int arr[10]; if (index >= 0 && index < 10) { arr[index] = value; }"
+    },
+    {
+        "id": "SV.SIGNAL.UNSAFE",
+        "title": "Unsafe Function Called from Signal Handler",
+        "description": "Call only async-signal-safe functions from signal handlers. Avoid malloc, printf, and similar.",
+        "bad": "void handler(int sig) { printf(\"Signal %d\\n\", sig); free(ptr); }",
+        "good": "volatile sig_atomic_t g_signal_flag = 0; void handler(int sig) { g_signal_flag = sig; }"
+    },
+    {
+        "id": "SV.WRAP.INTEGEROVERFLOW",
+        "title": "Integer Wraparound Before Size Check",
+        "description": "Validate size arithmetic before using results in allocations to prevent wraparound attacks.",
+        "bad": "size_t total = count * item_size; char *buf = malloc(total);",
+        "good": "if (count != 0 && item_size > SIZE_MAX / count) { return -1; } size_t total = count * item_size; char *buf = malloc(total);"
+    },
+    {
+        "id": "SV.INSECURE.RAND",
+        "title": "Use of Cryptographically Weak Random Number Generator",
+        "description": "Do not use rand() or similar weak PRNGs for security-sensitive operations. Use a CSPRNG instead.",
+        "bad": "int token = rand();",
+        "good": "/* Use getrandom(), /dev/urandom, or a platform CSPRNG API for security tokens */"
+    }
+]

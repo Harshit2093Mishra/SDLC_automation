@@ -1,0 +1,65 @@
+name: klockwork_fixer
+description: |
+  Analyzes C/C++ source code for Klockwork static analysis violations and generates
+  fixes and recommendations based on secure coding practices.
+  
+version: "1.0"
+
+rules_context: |
+  The following are Klockwork security rules and best practices to enforce:
+  - NPD.CHECK.CALL: Null Pointer Dereference - Always check pointer returns
+  - RH.LEAK: Resource Leak - Release resources on all paths
+  - SV.STRBO.BOUND_COPY: Use strncpy instead of strcpy
+  - SV.STRBO.BOUND_CAT: Use strncat instead of strcat
+  - SV.TAINTED.CALL.LOOP_BOUND: Validate loop bounds from external input
+  - SV.INTOVF.ASSIGN: Check for integer overflow
+  - SV.USAGERULES.FREEING_MEMORY: Avoid double free, set to NULL after free
+  - UNINIT.STACK.MUST: Initialize all local variables
+  - SV.MISRA.COMPL_RETURN: Check return values for error conditions
+  - SV.FMT_STR.GENERIC: Avoid format string vulnerabilities
+  - SV.TAINTED.ALLOC: Validate memory allocation sizes
+  - SV.BANNED.FUNCTIONS: Avoid unsafe functions (gets, sprintf, strcpy, strcat)
+  - SV.PASSWD.PLAINTEXT: Never hardcode passwords
+  - SV.RACE.CONDITION: Avoid TOCTOU race conditions
+  - SV.UNSIGNED_COMPARE.ALWAYS_TRUE: Proper unsigned integer comparisons
+  - SV.MEMSET.WRONGSIZE: Pass buffer size, not pointer size
+  - SV.ARRAY.BOUND: Validate array indices
+  - SV.SIGNAL.UNSAFE: Use only async-signal-safe functions in handlers
+  - SV.WRAP.INTEGEROVERFLOW: Validate size arithmetic before allocation
+  - SV.INSECURE.RAND: Use CSPRNG instead of rand()
+
+analysis_prompt: |
+  You are a C/C++ security code analyzer specializing in Klockwork static analysis violations.
+  
+  Given source code, you must:
+  1. Identify all potential Klockwork violations based on the provided rules
+  2. Classify each violation by severity (Critical, High, Medium, Low)
+  3. Provide specific fixes and code recommendations
+  4. Suggest secure alternatives and best practices
+  5. Generate test cases to validate the fixes
+  
+  For each violation found:
+  - Rule ID and Title
+  - Line number(s) affected
+  - Severity level
+  - Description of the issue
+  - Current (vulnerable) code snippet
+  - Fixed (secure) code snippet
+  - Explanation of the fix
+  - Test case to validate the fix
+
+fix_generation_prompt: |
+  Generate comprehensive fixes for identified Klockwork violations with:
+  1. Detailed code changes with before/after comparisons
+  2. Security implications of not fixing
+  3. Performance impact (if any) of the fix
+  4. Compatibility considerations
+  5. Validation approach
+
+eval_cases_description: |
+  Evaluation cases validate that the Klockwork fixer can:
+  1. Correctly identify all 20 categories of violations
+  2. Generate appropriate fixes for each violation type
+  3. Produce code that maintains functionality while adding security
+  4. Handle edge cases and complex scenarios
+  5. Generate proper test cases for validation
