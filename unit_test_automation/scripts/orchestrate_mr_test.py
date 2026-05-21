@@ -29,6 +29,7 @@ PROMPT_TEMPLATE = REPO_ROOT / "unit_test_automation/prompts/unit_test_generator.
 EVAL_SCRIPT = REPO_ROOT / "unit_test_automation/scripts/run_prompt_eval.sh"
 TESTS_DIR = REPO_ROOT / "tests"
 BUILD_SCRIPT = REPO_ROOT / "unit_test_automation/scripts/validate.sh"
+BUILD_FIX_PROMPT = REPO_ROOT / "unit_test_automation/prompts/build_fix.prompt.yml"
 
 # --- Helpers ---
 def run(cmd, **kwargs):
@@ -165,49 +166,104 @@ def main():
     parser.add_argument("--head", type=str, default="HEAD", help="Head git ref for diff")
     args = parser.parse_args()
 
-    print("[STEP 1] Collecting MR diff...")
-    diff = get_diff_json(args.base, args.head)
-    print(json.dumps(diff, indent=2))
+    if build.returncode == 0:
+        print("[INFO] Source compiles successfully.")
+        return
 
-    verify_source_compiles()
+    # Build failed: attempt to get AI-assisted fixes up to 5 times
+    combined_output = (build.stdout or "") + "\n" + (build.stderr or "")
+    print("[ERROR] Source compilation failed. Will attempt up to 5 AI-assisted fixes.")
+    for attempt in range(1, 6):
+        print(f"[INFO] AI fix attempt {attempt}/5: sending build output to model")
+        # prepare JSON input with build output
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as tf:
+            tf.write(json.dumps({"build_output": combined_output}))
+            tf.flush()
+            input_path = tf.name
 
-    print("[STEP 3] Generating tests for changed source files...")
-    suggested_by_test = {}
-    for t in diff.get("suggested_test_targets", []):
-        if isinstance(t, dict):
-            suggested_by_test.setdefault(t.get("suggested_test"), []).append(t.get("source"))
+        # call the eval script with the build-fix prompt and input JSON
+        try:
+            out = subprocess.run([str(EVAL_SCRIPT), str(BUILD_FIX_PROMPT), input_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except Exception as exc:
+            print(f"[ERROR] Failed to invoke AI fixer: {exc}")
+            break
 
-    for suggested_test, sources in suggested_by_test.items():
-        source = sources[0]
-        if len(sources) > 1:
-            print(f"[WARN] Multiple sources {sources} map to the same test target {suggested_test}; using {source}")
-        test_path = TESTS_DIR / Path(suggested_test).name
-        if test_path.exists():
-            print(f"[INFO] Existing test target {test_path} already exists; skipping generation")
-            continue
-        # Read code
-        header_code = ""
-        impl_code = ""
-        src_path = REPO_ROOT / source
-        if src_path.exists():
-            impl_code = src_path.read_text()
-        # Try to find header
-        header_path = src_path.with_suffix(".hpp")
-        if header_path.exists():
-            header_code = header_path.read_text()
-        # LLM call
-        llm_resp = generate_test_for_source(source, suggested_test, header_code, impl_code)
-        if not llm_resp or "test_code" not in llm_resp:
-            print(f"[ERROR] No test_code generated for {source}")
-            continue
-        test_path = write_test_file(llm_resp["test_file_path"], llm_resp["test_code"])
-        print(f"[INFO] Test written: {test_path}")
+        if out.returncode != 0:
+            print("[ERROR] AI fixer failed to run. Stderr:")
+            print(out.stderr)
+            break
 
-    print("[STEP 3] Building and running tests...")
-    success, output = build_and_test()
-    print("[REPORT] Test Results:\n" + output)
-    if not success:
-        sys.exit(1)
+        # Parse AI JSON response
+        try:
+            wrapper = json.loads(out.stdout)
+        except Exception:
+            print("[ERROR] Failed to parse AI response as JSON:")
+            print(out.stdout)
+            break
 
-if __name__ == "__main__":
-    main()
+        edits = wrapper.get("edits", [])
+        blockers = wrapper.get("blockers", [])
+        summary = wrapper.get("summary", "")
+        print(f"[AI] summary: {summary}")
+        if blockers:
+            print("[AI] blockers:")
+            for b in blockers:
+                print(" - ", b)
+            # If AI says it cannot fix, stop retrying
+            break
+
+        if not edits:
+            print("[INFO] AI returned no edits; stopping attempts.")
+            break
+
+        # Apply edits
+        applied_any = False
+        for e in edits:
+            path = e.get("path")
+            content = e.get("content")
+            if not path or content is None:
+                continue
+            target = REPO_ROOT / path
+            print(f"[PATCH] Applying edit to {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "w") as f:
+                f.write(content)
+            applied_any = True
+
+        if not applied_any:
+            print("[INFO] No valid edits applied; stopping attempts.")
+            break
+
+        # Re-run configure + build for next attempt
+        config = subprocess.run([
+            "cmake",
+            "-S",
+            str(REPO_ROOT),
+            "-B",
+            str(build_dir),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        build = subprocess.run([
+            "cmake",
+            "--build",
+            str(build_dir),
+            "--target",
+            "project_lib",
+            "--parallel",
+            "--clean-first",
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        combined_output = (build.stdout or "") + "\n" + (build.stderr or "")
+        if build.returncode == 0:
+            print("[INFO] Build fixed by AI edits.")
+            return
+        else:
+            print(f"[WARN] Build still failing after attempt {attempt}.")
+
+    # If we reach here, AI could not fix the build in 5 attempts
+    print("[ERROR] Build could not be fixed automatically after 5 attempts. Please inspect and retry.")
+    print(combined_output)
+    sys.exit(1)
