@@ -38,7 +38,7 @@ namespace example
 
     int Calculator::minEatingSpeed(std::vector<int> &piles, int h)
     {
-        int low = 1;
+        int low = 0;
         int high = *std::max_element(piles.begin(), piles.end());
         int ans = high;
 
