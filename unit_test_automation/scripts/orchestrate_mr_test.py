@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 # --- Config ---
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COLLECT_DIFF_SCRIPT = REPO_ROOT / "unit_test_automation/scripts/collect_pr_diff.py"
 PROMPT_TEMPLATE = REPO_ROOT / "unit_test_automation/prompts/unit_test_generator.prompt.yml"
 EVAL_SCRIPT = REPO_ROOT / "unit_test_automation/scripts/run_prompt_eval.sh"
@@ -40,28 +40,53 @@ def run(cmd, **kwargs):
         sys.exit(result.returncode)
     return result.stdout
 
-def get_diff_json():
+def get_diff_json(base: str, head: str):
     """Run collect_pr_diff.py and return parsed JSON."""
-    out = run([sys.executable, str(COLLECT_DIFF_SCRIPT)])
+    out = run([sys.executable, str(COLLECT_DIFF_SCRIPT), "--base", base, "--head", head])
     return json.loads(out)
 
 def generate_test_for_source(source_file, suggested_test_file, header_code, impl_code):
     """Call gh models eval with prompt template and variables. Returns LLM JSON response as dict."""
-    # Prepare input JSON for prompt
-    input_vars = {
-        "source_file": str(source_file),
-        "suggested_test_file": str(suggested_test_file),
-        "header_code": header_code,
-        "implementation_code": impl_code,
-    }
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
-        json.dump(input_vars, f)
+    # Create a temporary prompt YAML by embedding the source/header/implementation
+    template_text = Path(PROMPT_TEMPLATE).read_text()
+    # Indent code blocks to fit inside the YAML block scalar in the template
+    def indent_block(code: str, indent: str = "      ") -> str:
+        if not code:
+            return ""
+        return "\n".join(indent + line for line in code.splitlines())
+
+    prompt_filled = (
+        template_text
+        .replace("{{source_file}}", str(source_file))
+        .replace("{{suggested_test_file}}", str(suggested_test_file))
+        .replace("{{header_code}}", indent_block(header_code))
+        .replace("{{implementation_code}}", indent_block(impl_code))
+    )
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".prompt.yml") as f:
+        f.write(prompt_filled)
         f.flush()
-        input_path = f.name
+        prompt_path = f.name
     # Call run_prompt_eval.sh (which wraps gh models eval)
-    out = run([str(EVAL_SCRIPT), input_path])
-    # Find JSON in output
+    out = run([str(EVAL_SCRIPT), prompt_path])
+    # Try to parse the returned wrapper JSON from `gh models eval`.
     try:
+        wrapper = json.loads(out)
+        # `testResults` is an array; modelResponse is the inner JSON as a string.
+        for entry in wrapper.get("testResults", []):
+            mr = entry.get("modelResponse")
+            if not mr:
+                continue
+            try:
+                return json.loads(mr)
+            except Exception:
+                # If modelResponse isn't pure JSON, try to extract JSON substring.
+                try:
+                    start = mr.index("{")
+                    end = mr.rindex("}") + 1
+                    return json.loads(mr[start:end])
+                except Exception:
+                    continue
+        # Fallback: try to find any JSON object in the raw output.
         start = out.index("{" )
         end = out.rindex("}") + 1
         llm_json = out[start:end]
@@ -88,15 +113,23 @@ def build_and_test():
 def main():
     parser = argparse.ArgumentParser(description="Automated MR unit test generation and reporting.")
     parser.add_argument("--mr-link", type=str, help="Merge Request/PR link (not used in MVP)")
+    parser.add_argument("--base", type=str, default="origin/main", help="Base git ref for diff")
+    parser.add_argument("--head", type=str, default="HEAD", help="Head git ref for diff")
     args = parser.parse_args()
 
     print("[STEP 1] Collecting MR diff...")
-    diff = get_diff_json()
+    diff = get_diff_json(args.base, args.head)
     print(json.dumps(diff, indent=2))
 
     print("[STEP 2] Generating tests for changed source files...")
     for src in diff.get("source_files", []):
-        suggested_test = diff["suggested_test_targets"].get(src)
+        # `collect_pr_diff.py` returns `suggested_test_targets` as a list of
+        # {"source": ..., "suggested_test": ...} entries. Find the match.
+        suggested_test = None
+        for t in diff.get("suggested_test_targets", []):
+            if isinstance(t, dict) and t.get("source") == src:
+                suggested_test = t.get("suggested_test")
+                break
         if not suggested_test:
             print(f"[WARN] No suggested test file for {src}")
             continue
