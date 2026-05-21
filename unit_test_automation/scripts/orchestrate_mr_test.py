@@ -102,6 +102,54 @@ def write_test_file(test_file_path, test_code):
         f.write(test_code)
     return test_path
 
+def verify_source_compiles():
+    """Verify current source builds before generating tests."""
+    build_dir = REPO_ROOT / "build"
+    print("[STEP 2] Verifying source compiles before generating tests...")
+
+    config = subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(REPO_ROOT),
+            "-B",
+            str(build_dir),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Debug",
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if config.returncode != 0:
+        print("[ERROR] Source configuration failed. Fix source code before generating tests.")
+        print(config.stderr)
+        sys.exit(config.returncode)
+
+    build = subprocess.run(
+        [
+            "cmake",
+            "--build",
+            str(build_dir),
+            "--target",
+            "project_lib",
+            "--parallel",
+            "--clean-first",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if build.returncode != 0:
+        print("[ERROR] Source compilation failed. Fix source code before generating tests.")
+        print(build.stdout)
+        print(build.stderr)
+        sys.exit(build.returncode)
+    print("[INFO] Source compiles successfully.")
+
+
 def build_and_test():
     """Run build and tests via validate.sh. Returns (success, output)."""
     try:
@@ -121,7 +169,9 @@ def main():
     diff = get_diff_json(args.base, args.head)
     print(json.dumps(diff, indent=2))
 
-    print("[STEP 2] Generating tests for changed source files...")
+    verify_source_compiles()
+
+    print("[STEP 3] Generating tests for changed source files...")
     suggested_by_test = {}
     for t in diff.get("suggested_test_targets", []):
         if isinstance(t, dict):
