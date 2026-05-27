@@ -28,7 +28,6 @@ namespace example
         static int add(int a, int b);
         static std::optional<double> safe_divide(double numerator, double denominator);
         static bool is_even(int value);
-        static bool is_eleven(int value);
         static bool is_chomu(std::string manager);
         static int minEatingSpeed(std::vector<int> &piles, int h);
 

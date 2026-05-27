@@ -23,13 +23,6 @@ TEST(Calculator, IsEven)
     EXPECT_FALSE(calc.is_even(5));
 }
 
-TEST(Calculator, IsSeven)
-{
-    Calculator calc;
-    EXPECT_TRUE(calc.is_seven(7));
-    EXPECT_FALSE(calc.is_seven(6));
-}
-
 TEST(Calculator, IsChomu)
 {
     Calculator calc;
@@ -73,4 +66,17 @@ TEST(Calculator, CalculateFinalCartPrice_ValidCalculation)
     EXPECT_NEAR(result.discount, 142.5, 1e-6);
     EXPECT_NEAR(result.tax, 145.35, 1e-6);
     EXPECT_NEAR(result.total, 952.85, 1e-6);
+}
+
+TEST(Calculator, IsEleven)
+{
+    Calculator calc;
+    EXPECT_TRUE(calc.is_eleven(11));
+}
+
+TEST(Calculator, IsEleven_NotEleven)
+{
+    Calculator calc;
+    EXPECT_FALSE(calc.is_eleven(10));
+    EXPECT_FALSE(calc.is_eleven(12));
 }
