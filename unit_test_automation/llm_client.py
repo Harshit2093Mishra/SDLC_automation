@@ -65,7 +65,7 @@ def _invoke_model(model: str, system_msg: str, user_msg: str) -> Optional[str]:
     """
     cmd = ["gh", "models", "run", model]
     if system_msg:
-        cmd += ["--system", system_msg]
+        cmd += ["--system-prompt", system_msg]
 
     try:
         result = subprocess.run(
