@@ -67,8 +67,11 @@ def parse_llm_json(raw: str) -> Optional[dict]:
 
     if parsed is not None:
         # Check if this is a gh models eval wrapper
+        # Use 'or []' not default arg — handles both missing key AND explicit null value
         if "testResults" in parsed:
-            for entry in parsed.get("testResults", []):
+            for entry in (parsed.get("testResults") or []):
+                if not isinstance(entry, dict):
+                    continue
                 mr = entry.get("modelResponse") or entry.get("output")
                 if not mr:
                     continue
@@ -83,7 +86,7 @@ def parse_llm_json(raw: str) -> Optional[dict]:
                     return json.loads(mr[start:end])
                 except Exception:
                     continue
-            # Wrapper had no valid model responses
+            # It was a wrapper but had no valid model responses — return None
             return None
         # Not a wrapper — return it directly (already the model JSON)
         return parsed
