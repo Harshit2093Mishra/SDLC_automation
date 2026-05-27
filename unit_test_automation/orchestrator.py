@@ -67,6 +67,89 @@ def _write_or_merge_tests(test_path: Path, new_code: str, existing_code: str) ->
         print(f"[WRITE] Created new test file: {test_path}")
 
 
+def _sanitize_test_code(new_code: str, existing_code: str) -> str:
+    """
+    Fix common LLM mistakes in generated test code BEFORE merging:
+
+    1. INCLUDES: Replace any #include lines in new_code that don't match the
+       existing test file with the includes from existing_code.
+       This prevents the LLM inventing wrong paths like '../include/calculator.h'.
+
+    2. SUITE NAME: If existing tests use 'TEST(Calculator, ...)' but the LLM
+       generated 'TEST(CalculatorTest, ...)', rename to match.
+
+    Only runs when existing_code is non-empty (we have a reference to copy from).
+    """
+    import re
+
+    if not existing_code or not new_code:
+        return new_code
+
+    # ── 1: Include fixup ────────────────────────────────────────────────────
+    INCLUDE_RE = re.compile(r'^\s*#\s*include\s+.+$', re.MULTILINE)
+
+    existing_includes = INCLUDE_RE.findall(existing_code)
+    new_includes = INCLUDE_RE.findall(new_code)
+
+    if existing_includes and new_includes:
+        # Categorize: gtest includes, project includes, stdlib includes
+        def _is_gtest(inc: str) -> bool:
+            return "gtest" in inc or "gmock" in inc
+
+        def _is_project(inc: str) -> bool:
+            return '"' in inc and not _is_gtest(inc)
+
+        def _is_stdlib(inc: str) -> bool:
+            return "<" in inc and not _is_gtest(inc)
+
+        existing_project = [i for i in existing_includes if _is_project(i)]
+        new_project = [i for i in new_includes if _is_project(i)]
+
+        if existing_project and new_project:
+            # Check if the LLM used different project include paths
+            existing_paths = {re.search(r'["\'](.+?)["\']', i).group(1)
+                              for i in existing_project
+                              if re.search(r'["\'](.+?)["\']', i)}
+            new_paths = {re.search(r'["\'](.+?)["\']', i).group(1)
+                         for i in new_project
+                         if re.search(r'["\'](.+?)["\']', i)}
+
+            if new_paths != existing_paths:
+                print(f"  [SANITIZE] Fixing includes: LLM used {new_paths}, "
+                      f"replacing with {existing_paths}")
+                # Remove all project includes from new_code and replace with existing ones
+                for bad_inc in new_project:
+                    new_code = new_code.replace(bad_inc, "", 1)
+                # Insert correct project includes after first gtest include
+                gtest_inc = next((i for i in new_includes if _is_gtest(i)), None)
+                if gtest_inc:
+                    replacement = gtest_inc + "\n" + "\n".join(existing_project)
+                    new_code = new_code.replace(gtest_inc, replacement, 1)
+
+    # ── 2: Suite name fixup ─────────────────────────────────────────────────
+    TEST_MACRO_RE = re.compile(
+        r'((?:TEST|TEST_F|TEST_P)\s*\(\s*)(\w+)(\s*,)',
+    )
+
+    existing_suites = {m.group(2) for m in TEST_MACRO_RE.finditer(existing_code)}
+    new_suites = {m.group(2) for m in TEST_MACRO_RE.finditer(new_code)}
+
+    if len(existing_suites) == 1 and new_suites - existing_suites:
+        correct_suite = next(iter(existing_suites))
+        wrong_suites = new_suites - existing_suites
+        for wrong in wrong_suites:
+            if wrong != correct_suite:
+                print(f"  [SANITIZE] Fixing suite name: '{wrong}' -> '{correct_suite}'")
+                new_code = re.sub(
+                    rf'((?:TEST|TEST_F|TEST_P)\s*\(\s*){re.escape(wrong)}(\s*,)',
+                    rf'\g<1>{correct_suite}\2',
+                    new_code,
+                )
+
+    return new_code
+
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -194,6 +277,8 @@ def step_generate_tests(diff: DiffResult) -> int:
 
         # Step B: merge new tests in (skip if LLM had nothing new to add)
         if test_code.strip():
+            # Sanitize before merging: fix wrong includes, suite names, etc.
+            test_code = _sanitize_test_code(test_code, existing_code)
             _write_or_merge_tests(test_path, test_code, existing_code)
         elif tests_to_remove:
             print(f"  [INFO] Only removals; test file cleaned up.")
