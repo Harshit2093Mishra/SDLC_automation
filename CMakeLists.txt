@@ -6,15 +6,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
-add_library(project_lib
-    src/calculator.cpp
-)
+
+# ── production library ────────────────────────────────────────────────
+file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.cc" "src/*.cxx")
+
+add_library(project_lib ${LIB_SOURCES})
 
 target_include_directories(project_lib
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/unit_test_automation/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# ── GoogleTest ────────────────────────────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(
   googletest
@@ -24,15 +27,18 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-add_executable(calculator_tests
-    tests/calculator_test.cpp
-)
+# ── test targets (auto-discovered) ────────────────────────────────────
+file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "tests/*_test.cpp" "tests/*_test.cc")
 
-target_link_libraries(calculator_tests
-    PRIVATE
-        project_lib
-        GTest::gtest_main
-)
+if(TEST_SOURCES)
+    add_executable(all_tests ${TEST_SOURCES})
 
-include(GoogleTest)
-gtest_discover_tests(calculator_tests)
+    target_link_libraries(all_tests
+        PRIVATE
+            project_lib
+            GTest::gtest_main
+    )
+
+    include(GoogleTest)
+    gtest_discover_tests(all_tests)
+endif()
