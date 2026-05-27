@@ -30,7 +30,7 @@ namespace example
         return value % 2 == 0;
     }
 
-    bool Calculator::is_eight(int value)
+    bool Calculator::is_seven(int value)
     {
         return value == 7;
     }
