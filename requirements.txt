@@ -1,1 +1,2 @@
-# Stdlib-only scripts for Week 1.
+# Runtime dependencies for the unit_test_automation package
+pyyaml>=6.0       # parse prompt YAML files without shell gymnastics

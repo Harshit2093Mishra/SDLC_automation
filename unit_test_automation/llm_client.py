@@ -1,19 +1,101 @@
 """
 LLM interaction: prompt template filling and response parsing.
+
+Key design:
+* The bash eval script is NO LONGER used for inference.
+  gh models run is called directly via subprocess, which avoids all
+  shell quoting / read-splitting bugs.
+* The bash script (run_prompt_eval.sh) is kept only for manual
+  standalone debugging.
 """
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
-from unit_test_automation.config import PROMPT_TEMPLATE, BUILD_FIX_PROMPT, EVAL_SCRIPT
+from unit_test_automation.config import PROMPT_TEMPLATE, BUILD_FIX_PROMPT
 
 
 # ---------------------------------------------------------------------------
-# Prompt helpers
+# Internal: invoke the model
+# ---------------------------------------------------------------------------
+def _load_prompt_yaml(path: Path) -> tuple[str, str, str]:
+    """
+    Parse a filled prompt YAML and return (model, system_msg, user_msg).
+
+    Requires PyYAML (``pip install pyyaml``).
+    """
+    try:
+        import yaml
+    except ImportError:
+        raise RuntimeError(
+            "PyYAML is required: run 'pip install pyyaml' or "
+            "'pip install -r requirements.txt'"
+        )
+    with open(path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+
+    model = doc.get("model", "openai/gpt-4o-mini")
+    system_msg = ""
+    user_msg = ""
+    for msg in doc.get("messages", []):
+        role = msg.get("role", "")
+        content = str(msg.get("content", ""))
+        if role == "system":
+            system_msg = content
+        elif role == "user":
+            user_msg = content
+
+    return model, system_msg, user_msg
+
+
+def _invoke_model(model: str, system_msg: str, user_msg: str) -> Optional[str]:
+    """
+    Call ``gh models run`` for a single inference.
+
+    * model      — e.g. ``openai/gpt-4o-mini``
+    * system_msg — system prompt (passed via --system flag)
+    * user_msg   — user turn (piped to stdin)
+
+    Returns raw model output string or None on failure.
+    """
+    cmd = ["gh", "models", "run", model]
+    if system_msg:
+        cmd += ["--system", system_msg]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=user_msg,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[ERROR] gh models run failed (exit {result.returncode}):")
+            print(result.stderr[:800])
+            return None
+        output = result.stdout.strip()
+        if not output:
+            print("[ERROR] gh models run returned empty output.")
+            print(f"[DEBUG] stderr: {result.stderr[:400]}")
+            return None
+        return output
+    except FileNotFoundError:
+        print("[ERROR] 'gh' CLI not found. Install from https://cli.github.com/")
+        print("[INFO]  Also run: gh extension install github/gh-models")
+        return None
+    except OSError as exc:
+        print(f"[ERROR] Could not run 'gh': {exc}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Prompt template helpers
 # ---------------------------------------------------------------------------
 def _indent_block(code: str, indent: str = "      ") -> str:
     if not code:
@@ -29,11 +111,13 @@ def fill_prompt_template(
     Read *template_path*, replace ``{{key}}`` placeholders, write to a
     temp file and return its path.
     """
-    text = template_path.read_text()
+    text = template_path.read_text(encoding="utf-8")
     for key, value in substitutions.items():
         text = text.replace(f"{{{{{key}}}}}", value)
 
-    tmp = tempfile.NamedTemporaryFile("w", delete=False, suffix=template_path.suffix)
+    tmp = tempfile.NamedTemporaryFile(
+        "w", delete=False, suffix=template_path.suffix, encoding="utf-8"
+    )
     tmp.write(text)
     tmp.flush()
     tmp.close()
@@ -45,10 +129,7 @@ def fill_prompt_template(
 # ---------------------------------------------------------------------------
 def _strip_markdown_fences(text: str) -> str:
     """Strip ```json ... ``` or ``` ... ``` wrappers that models sometimes add."""
-    import re
-    # Remove opening fence (```json or ```)
     text = re.sub(r"^```(?:json)?\s*\n?", "", text.strip(), flags=re.IGNORECASE)
-    # Remove closing fence
     text = re.sub(r"\n?```\s*$", "", text.strip())
     return text.strip()
 
@@ -57,36 +138,28 @@ def parse_llm_json(raw: str) -> Optional[dict]:
     """
     Robustly extract a JSON object from raw LLM output.
 
-    Handles three output formats:
-    1. ``gh models eval`` wrapper: { "testResults": [...] }  — unwrap it
-    2. Plain JSON (direct model response) — return as-is
-    3. Markdown-fenced JSON (```json{...}```) — strip fences then parse
-    4. JSON embedded in prose — brute-force first { ... last } extraction
-
-    Note on ``testResults: null``:
-      This happens with ``gh models eval`` when testData is empty.
-      The script now uses ``gh models run`` which returns raw text, so
-      this case should no longer occur. Handling kept for safety.
+    Handles:
+    1. ``gh models eval`` wrapper: { "testResults": [...] } — unwrap
+    2. Markdown-fenced JSON: ```json{...}``` — strip fences then parse
+    3. Plain JSON — parse directly
+    4. JSON embedded in prose — brute-force { ... } extraction
     """
     if not raw or not raw.strip():
         return None
 
-    # Strip markdown code fences that some models add
     cleaned = _strip_markdown_fences(raw)
 
+    # Try to parse (fence-stripped first, then original)
     parsed = None
-    try:
-        parsed = json.loads(cleaned)
-    except Exception:
-        # Try original raw in case stripping broke something
+    for candidate in (cleaned, raw):
         try:
-            parsed = json.loads(raw)
+            parsed = json.loads(candidate)
+            break
         except Exception:
             pass
 
     if parsed is not None:
-        # Check if this is a gh models eval wrapper
-        # Use 'or []' — handles both missing key AND explicit null value
+        # Unwrap gh models eval wrapper if present
         if "testResults" in parsed:
             for entry in (parsed.get("testResults") or []):
                 if not isinstance(entry, dict):
@@ -94,7 +167,6 @@ def parse_llm_json(raw: str) -> Optional[dict]:
                 mr = entry.get("modelResponse") or entry.get("output")
                 if not mr:
                     continue
-                # modelResponse may itself be a JSON string or contain one
                 try:
                     return json.loads(mr)
                 except Exception:
@@ -105,18 +177,15 @@ def parse_llm_json(raw: str) -> Optional[dict]:
                     return json.loads(mr[start:end])
                 except Exception:
                     continue
-            # It was a wrapper but had no valid model responses
             return None
-        # Not a wrapper — return it directly
         return parsed
 
-    # Not valid JSON even after fence stripping — brute-force extract { ... }
+    # Brute-force: extract first complete {...} block
     for text in (cleaned, raw):
         try:
             start = text.index("{")
             end = text.rindex("}") + 1
-            result = json.loads(text[start:end])
-            return result
+            return json.loads(text[start:end])
         except Exception:
             pass
 
@@ -124,7 +193,7 @@ def parse_llm_json(raw: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# LLM calls
+# Public LLM calls
 # ---------------------------------------------------------------------------
 def generate_tests(
     source_file: str,
@@ -135,8 +204,7 @@ def generate_tests(
     existing_test_code: str = "",
 ) -> Optional[dict]:
     """
-    Call the LLM to generate unit tests.  Returns the parsed JSON response
-    or ``None`` on failure.
+    Generate unit tests via the LLM. Returns parsed JSON or None on failure.
     """
     prompt_path = fill_prompt_template(
         PROMPT_TEMPLATE,
@@ -145,27 +213,30 @@ def generate_tests(
             "suggested_test_file": suggested_test_file,
             "header_code": _indent_block(header_code),
             "implementation_code": _indent_block(impl_code),
-            "diff_content": _indent_block(diff_content) if diff_content else "(full file provided above — no incremental diff available)",
-            "existing_test_code": _indent_block(existing_test_code) if existing_test_code else "(no existing tests)",
+            "diff_content": (
+                _indent_block(diff_content)
+                if diff_content
+                else "(full file provided above — no incremental diff available)"
+            ),
+            "existing_test_code": (
+                _indent_block(existing_test_code)
+                if existing_test_code
+                else "(no existing tests)"
+            ),
         },
     )
     try:
-        result = subprocess.run(
-            [str(EVAL_SCRIPT), str(prompt_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"[ERROR] eval script failed: {result.stderr}")
-            return None
-        out = result.stdout
-    except (FileNotFoundError, OSError) as exc:
-        print(f"[ERROR] Could not run eval script ({EVAL_SCRIPT}): {exc}")
-        print("[INFO] The eval script requires bash + gh CLI. Run in a Linux/Codespaces environment.")
+        model, system_msg, user_msg = _load_prompt_yaml(prompt_path)
+    except Exception as exc:
+        print(f"[ERROR] Failed to load prompt YAML: {exc}")
+        prompt_path.unlink(missing_ok=True)
         return None
     finally:
         prompt_path.unlink(missing_ok=True)
+
+    out = _invoke_model(model, system_msg, user_msg)
+    if not out:
+        return None
 
     parsed = parse_llm_json(out)
     if parsed is None:
@@ -178,32 +249,29 @@ def generate_build_fix(build_output: str) -> Optional[dict]:
     Ask the LLM for source edits that fix compilation errors.
 
     Returns parsed JSON with ``edits``, ``blockers``, ``summary`` keys,
-    or ``None`` on failure.
+    or None on failure.
     """
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as tf:
-        json.dump({"build_output": build_output}, tf)
-        tf.flush()
-        input_path = tf.name
-
+    # Embed the build output directly into the user message via template
+    prompt_path = fill_prompt_template(
+        BUILD_FIX_PROMPT,
+        {
+            "build_output": build_output[:4000],   # cap to avoid huge prompts
+        },
+    )
     try:
-        result = subprocess.run(
-            [str(EVAL_SCRIPT), str(BUILD_FIX_PROMPT), input_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except (FileNotFoundError, OSError) as exc:
-        Path(input_path).unlink(missing_ok=True)
-        print(f"[ERROR] Could not run eval script: {exc}")
+        model, system_msg, user_msg = _load_prompt_yaml(prompt_path)
+    except Exception as exc:
+        print(f"[ERROR] Failed to load build fix prompt YAML: {exc}")
+        prompt_path.unlink(missing_ok=True)
         return None
     finally:
-        Path(input_path).unlink(missing_ok=True)
+        prompt_path.unlink(missing_ok=True)
 
-    if result.returncode != 0:
-        print(f"[ERROR] AI fixer failed. Stderr:\n{result.stderr}")
+    out = _invoke_model(model, system_msg, user_msg)
+    if not out:
         return None
 
-    parsed = parse_llm_json(result.stdout)
+    parsed = parse_llm_json(out)
     if parsed is None:
-        print(f"[ERROR] Failed to parse AI response:\n{result.stdout[:500]}")
+        print(f"[ERROR] Failed to parse AI response:\n{out[:500]}")
     return parsed

@@ -25,8 +25,9 @@ messages:
 
   - role: user
     content: |
-      Build output to analyse (provided as JSON with key `build_output`):
+      The following CMake/compiler build output contains errors.
       Suggest minimal file edits to make the project compile.
       Return only the required JSON.
 
-testData: []
+      Build output:
+      {{build_output}}
