@@ -248,24 +248,41 @@ def generate_build_fix(build_output: str) -> Optional[dict]:
     """
     Ask the LLM for source edits that fix compilation errors.
 
+    The build output is passed directly as the user message (NOT injected
+    into YAML) to avoid YAML parse errors from colons in compiler messages.
+
     Returns parsed JSON with ``edits``, ``blockers``, ``summary`` keys,
     or None on failure.
     """
-    # Embed the build output directly into the user message via template
-    prompt_path = fill_prompt_template(
-        BUILD_FIX_PROMPT,
-        {
-            "build_output": build_output[:4000],   # cap to avoid huge prompts
-        },
-    )
+    # Load only the model name and system message from the prompt template.
+    # We intentionally do NOT inject build_output into the YAML (it contains
+    # colons that break YAML parsing). Instead we construct user_msg directly.
     try:
-        model, system_msg, user_msg = _load_prompt_yaml(prompt_path)
+        import yaml
+    except ImportError:
+        raise RuntimeError("PyYAML is required: pip install pyyaml")
+
+    try:
+        with open(BUILD_FIX_PROMPT, encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
     except Exception as exc:
-        print(f"[ERROR] Failed to load build fix prompt YAML: {exc}")
-        prompt_path.unlink(missing_ok=True)
+        print(f"[ERROR] Failed to load build fix prompt: {exc}")
         return None
-    finally:
-        prompt_path.unlink(missing_ok=True)
+
+    model = doc.get("model", "openai/gpt-4o-mini")
+    system_msg = ""
+    for msg in doc.get("messages", []):
+        if msg.get("role") == "system":
+            system_msg = str(msg.get("content", ""))
+            break
+
+    user_msg = (
+        "The following CMake/compiler build output contains errors.\n"
+        "Suggest minimal file edits to make the project compile.\n"
+        "Return only the required JSON.\n\n"
+        "Build output:\n"
+        + build_output[:4000]
+    )
 
     out = _invoke_model(model, system_msg, user_msg)
     if not out:
@@ -275,3 +292,4 @@ def generate_build_fix(build_output: str) -> Optional[dict]:
     if parsed is None:
         print(f"[ERROR] Failed to parse AI response:\n{out[:500]}")
     return parsed
+
