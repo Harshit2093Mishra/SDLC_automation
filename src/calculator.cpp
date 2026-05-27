@@ -30,9 +30,9 @@ namespace example
         return value % 2 == 0;
     }
 
-    bool Calculator::is_seven(int value)
+    bool Calculator::is_eleven(int value)
     {
-        return value == 7;
+        return value == 11;
     }
 
     bool Calculator::is_chomu(std::string manager)
