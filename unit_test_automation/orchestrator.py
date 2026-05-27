@@ -126,6 +126,7 @@ def step_generate_tests(diff: DiffResult) -> int:
         return 0
 
     generated = 0
+    llm_failures: list[str] = []   # sources where LLM returned nothing
     for source in sources_to_process:
         src_path = REPO_ROOT / source
         if not src_path.is_file():
@@ -160,16 +161,19 @@ def step_generate_tests(diff: DiffResult) -> int:
         )
 
         if not llm_resp:
-            print(f"  [ERROR] No response from LLM for {source}")
+            print(f"  [ERROR] LLM returned no response for {source}.")
+            print(f"  [HINT]  Check gh models auth: run 'gh auth status' and 'gh models list'")
+            llm_failures.append(source)
             continue
 
         if "test_code" not in llm_resp:
             print(f"  [ERROR] LLM response missing 'test_code' for {source}")
-            blockers = llm_resp.get("blockers", [])
+            blockers = llm_resp.get("blockers", []) or []
             if blockers:
                 print("  [LLM blockers]:")
                 for b in blockers:
                     print(f"    - {b}")
+            llm_failures.append(source)
             continue
 
         test_code = llm_resp.get("test_code", "")
@@ -195,7 +199,7 @@ def step_generate_tests(diff: DiffResult) -> int:
             print(f"  [INFO] Only removals; test file cleaned up.")
         generated += 1
 
-    return generated
+    return generated, llm_failures
 
 
 def step_build_and_test(build_dir: Path | None = None) -> None:
@@ -218,8 +222,17 @@ def run(base: str, head: str, build_dir: Path | None = None, skip_build: bool = 
     diff = step_collect_diff(base, head)
     step_verify_source(build_dir)
     step_cleanup_deleted(diff)
-    n = step_generate_tests(diff)
-    print(f"\n[INFO] Generated/updated tests for {n} file(s).")
+    generated, llm_failures = step_generate_tests(diff)
+    print(f"\n[INFO] Generated/updated tests for {generated} file(s).")
+
+    if llm_failures:
+        print(f"\n[ABORT] LLM failed to generate tests for {len(llm_failures)} file(s):")
+        for f in llm_failures:
+            print(f"  - {f}")
+        print("[ABORT] Building with stale/incorrect tests would be misleading.")
+        print("[ABORT] Fix LLM connectivity (check 'gh auth status') and re-run.")
+        sys.exit(1)
+
     if not skip_build:
         step_build_and_test(build_dir)
     else:

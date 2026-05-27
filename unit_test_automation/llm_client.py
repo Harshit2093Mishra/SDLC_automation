@@ -43,31 +43,50 @@ def fill_prompt_template(
 # ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
+def _strip_markdown_fences(text: str) -> str:
+    """Strip ```json ... ``` or ``` ... ``` wrappers that models sometimes add."""
+    import re
+    # Remove opening fence (```json or ```)
+    text = re.sub(r"^```(?:json)?\s*\n?", "", text.strip(), flags=re.IGNORECASE)
+    # Remove closing fence
+    text = re.sub(r"\n?```\s*$", "", text.strip())
+    return text.strip()
+
+
 def parse_llm_json(raw: str) -> Optional[dict]:
     """
-    Robustly extract a JSON object from raw LLM / ``gh models eval`` output.
+    Robustly extract a JSON object from raw LLM output.
 
-    ``gh models eval --json`` wraps the model response in:
-      { "testResults": [{ "modelResponse": "<json string>" }] }
+    Handles three output formats:
+    1. ``gh models eval`` wrapper: { "testResults": [...] }  — unwrap it
+    2. Plain JSON (direct model response) — return as-is
+    3. Markdown-fenced JSON (```json{...}```) — strip fences then parse
+    4. JSON embedded in prose — brute-force first { ... last } extraction
 
-    We must always unwrap this before returning, otherwise callers receive
-    the wrapper dict (with keys like ``totalTests``) instead of the model's
-    actual JSON payload.
-
-    Tries, in order:
-    1. Parse as JSON; if it looks like a gh-models wrapper, unwrap it.
-    2. If direct parse succeeded and is NOT a wrapper, return it.
-    3. Brute-force first ``{`` ... last ``}`` extraction.
+    Note on ``testResults: null``:
+      This happens with ``gh models eval`` when testData is empty.
+      The script now uses ``gh models run`` which returns raw text, so
+      this case should no longer occur. Handling kept for safety.
     """
+    if not raw or not raw.strip():
+        return None
+
+    # Strip markdown code fences that some models add
+    cleaned = _strip_markdown_fences(raw)
+
     parsed = None
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(cleaned)
     except Exception:
-        pass
+        # Try original raw in case stripping broke something
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            pass
 
     if parsed is not None:
         # Check if this is a gh models eval wrapper
-        # Use 'or []' not default arg — handles both missing key AND explicit null value
+        # Use 'or []' — handles both missing key AND explicit null value
         if "testResults" in parsed:
             for entry in (parsed.get("testResults") or []):
                 if not isinstance(entry, dict):
@@ -75,7 +94,7 @@ def parse_llm_json(raw: str) -> Optional[dict]:
                 mr = entry.get("modelResponse") or entry.get("output")
                 if not mr:
                     continue
-                # modelResponse may itself be a JSON string or may contain one
+                # modelResponse may itself be a JSON string or contain one
                 try:
                     return json.loads(mr)
                 except Exception:
@@ -86,18 +105,22 @@ def parse_llm_json(raw: str) -> Optional[dict]:
                     return json.loads(mr[start:end])
                 except Exception:
                     continue
-            # It was a wrapper but had no valid model responses — return None
+            # It was a wrapper but had no valid model responses
             return None
-        # Not a wrapper — return it directly (already the model JSON)
+        # Not a wrapper — return it directly
         return parsed
 
-    # Not valid JSON at all — brute-force extract first {...} block
-    try:
-        start = raw.index("{")
-        end = raw.rindex("}") + 1
-        return json.loads(raw[start:end])
-    except Exception:
-        return None
+    # Not valid JSON even after fence stripping — brute-force extract { ... }
+    for text in (cleaned, raw):
+        try:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            result = json.loads(text[start:end])
+            return result
+        except Exception:
+            pass
+
+    return None
 
 
 # ---------------------------------------------------------------------------
