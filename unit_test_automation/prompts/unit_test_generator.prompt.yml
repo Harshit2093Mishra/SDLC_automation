@@ -3,6 +3,7 @@ description: >
   Generate or update GoogleTest unit tests for changed C++ production code.
   When existing tests are provided, generate ONLY new test cases for the
   changed/added code — do not reproduce tests that already exist.
+  Also identify stale tests for functions that were renamed or removed.
   Return a strict JSON payload.
 model: openai/gpt-4o-mini
 modelParameters:
@@ -25,10 +26,12 @@ messages:
          the newly changed or added functions — do not duplicate existing tests.
       8. Use the EXACT same namespace, class names, method names, and types
          as declared in the header. Do NOT invent symbols.
+      9. If the diff shows a function was RENAMED or REMOVED, add its old
+         test name(s) to the "tests_to_remove" list so they can be deleted.
 
       Output JSON schema:
       {
-        "summary": "short sentence describing what tests were added",
+        "summary": "short sentence describing what tests were added/removed",
         "test_file_path": "tests/..._test.cpp",
         "includes": ["#include <gtest/gtest.h>", "#include \"...\""],
         "test_cases": [
@@ -37,16 +40,24 @@ messages:
             "purpose": "what behaviour is validated"
           }
         ],
-        "test_code": "full compilable C++ test source — ONLY the new tests, not the full merged file",
+        "test_code": "full compilable C++ test source containing ONLY the new/updated tests",
+        "tests_to_remove": ["SuiteName.OldTestName"],
         "blockers": []
       }
 
       Rules for test_code:
-      - Include at least one happy-path case for each changed function.
-      - Include at least one edge case for each changed function.
+      - Include at least one happy-path case for each changed/added function.
+      - Include at least one edge case for each changed/added function.
       - The test_code field must be self-contained and compilable on its own
         (with the correct #includes at the top).
       - Do NOT reproduce tests already listed in existing_test_code.
+      - If there are no new tests to add (e.g. only removals), set
+        test_code to an empty string "" and explain in summary.
+
+      Rules for tests_to_remove:
+      - List the "SuiteName.TestName" key for every test that tests a
+        function that was RENAMED or REMOVED in the diff.
+      - If nothing was removed/renamed, set tests_to_remove to [].
 
   - role: user
     content: |
@@ -55,18 +66,20 @@ messages:
       Source file      : {{source_file}}
       Suggested output : {{suggested_test_file}}
 
-      ── Public header(s) ────────────────────────────────────────────────────
+      -- Public header(s) ---------------------------------------------------
       {{header_code}}
 
-      ── Implementation (full file) ──────────────────────────────────────────
+      -- Implementation (full file) -----------------------------------------
       {{implementation_code}}
 
-      ── What changed in this MR (unified diff) ──────────────────────────────
+      -- What changed in this MR (unified diff) -----------------------------
       {{diff_content}}
 
-      ── Existing tests (DO NOT reproduce these) ─────────────────────────────
+      -- Existing tests (DO NOT reproduce; list stale ones in tests_to_remove)
       {{existing_test_code}}
 
       Focus ONLY on functions that appear in the diff above.
-      If the diff is unavailable, focus on functions that are not covered by
-      the existing tests.
+      If a function was renamed (e.g. is_seven -> is_eleven), add the OLD
+      test (e.g. Calculator.IsSeven) to tests_to_remove and add a NEW test
+      for the renamed function.
+      If the diff is unavailable, focus on functions not covered by existing tests.

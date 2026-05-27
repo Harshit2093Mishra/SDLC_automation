@@ -13,7 +13,7 @@ from pathlib import Path
 from unit_test_automation.config import REPO_ROOT, TESTS_DIR
 from unit_test_automation.diff_collector import collect_diff, guess_test_path, DiffResult
 from unit_test_automation.header_resolver import resolve_headers_for_source
-from unit_test_automation.test_merger import merge_tests, remove_tests_for_source
+from unit_test_automation.test_merger import merge_tests, remove_tests_for_source, remove_tests_by_key
 from unit_test_automation.llm_client import generate_tests
 from unit_test_automation.build_manager import verify_source_compiles, build_and_run_tests
 
@@ -142,7 +142,8 @@ def step_generate_tests(diff: DiffResult) -> int:
 
         # Build context for the LLM
         header_code, impl_code = _read_source(source)
-        diff_content = diff.get_diff_for(source)
+        # Use combined diff: source diff + any related header diffs
+        diff_content = diff.get_combined_diff_for_source(source)
 
         if not impl_code:
             print(f"  [WARN] Could not read {source}; skipping.")
@@ -171,15 +172,27 @@ def step_generate_tests(diff: DiffResult) -> int:
                     print(f"    - {b}")
             continue
 
-        test_code = llm_resp["test_code"]
+        test_code = llm_resp.get("test_code", "")
         summary = llm_resp.get("summary", "")
         cases = llm_resp.get("test_cases", [])
+        tests_to_remove = llm_resp.get("tests_to_remove", [])
         print(f"  [LLM] {summary}")
         if cases:
-            print(f"  [LLM] {len(cases)} test case(s): {[c.get('name') for c in cases]}")
+            print(f"  [LLM] {len(cases)} new test case(s): {[c.get('name') for c in cases]}")
+        if tests_to_remove:
+            print(f"  [LLM] Stale tests to remove: {tests_to_remove}")
 
-        # Write or merge
-        _write_or_merge_tests(test_path, test_code, existing_code)
+        # Step A: remove stale tests for renamed/deleted functions
+        if tests_to_remove and test_path.is_file():
+            remove_tests_by_key(test_path, tests_to_remove)
+            # Re-read after removal so merge sees the cleaned file
+            existing_code = _read_existing_tests(test_path)
+
+        # Step B: merge new tests in (skip if LLM had nothing new to add)
+        if test_code.strip():
+            _write_or_merge_tests(test_path, test_code, existing_code)
+        elif tests_to_remove:
+            print(f"  [INFO] Only removals; test file cleaned up.")
         generated += 1
 
     return generated

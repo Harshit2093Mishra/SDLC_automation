@@ -47,39 +47,48 @@ def parse_llm_json(raw: str) -> Optional[dict]:
     """
     Robustly extract a JSON object from raw LLM / ``gh models eval`` output.
 
+    ``gh models eval --json`` wraps the model response in:
+      { "testResults": [{ "modelResponse": "<json string>" }] }
+
+    We must always unwrap this before returning, otherwise callers receive
+    the wrapper dict (with keys like ``totalTests``) instead of the model's
+    actual JSON payload.
+
     Tries, in order:
-    1. Direct ``json.loads`` on the full output.
-    2. Unwrapping from the ``testResults[].modelResponse`` wrapper.
+    1. Parse as JSON; if it looks like a gh-models wrapper, unwrap it.
+    2. If direct parse succeeded and is NOT a wrapper, return it.
     3. Brute-force first ``{`` ... last ``}`` extraction.
     """
-    # 1) Direct parse (if the output *is* the JSON)
+    parsed = None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except Exception:
         pass
 
-    # 2) gh models eval wrapper
-    try:
-        wrapper = json.loads(raw)
-        for entry in wrapper.get("testResults", []):
-            mr = entry.get("modelResponse") or entry.get("output")
-            if not mr:
-                continue
-            try:
-                return json.loads(mr)
-            except Exception:
-                pass
-            # Fallback: extract first JSON object from modelResponse
-            try:
-                start = mr.index("{")
-                end = mr.rindex("}") + 1
-                return json.loads(mr[start:end])
-            except Exception:
-                continue
-    except Exception:
-        pass
+    if parsed is not None:
+        # Check if this is a gh models eval wrapper
+        if "testResults" in parsed:
+            for entry in parsed.get("testResults", []):
+                mr = entry.get("modelResponse") or entry.get("output")
+                if not mr:
+                    continue
+                # modelResponse may itself be a JSON string or may contain one
+                try:
+                    return json.loads(mr)
+                except Exception:
+                    pass
+                try:
+                    start = mr.index("{")
+                    end = mr.rindex("}") + 1
+                    return json.loads(mr[start:end])
+                except Exception:
+                    continue
+            # Wrapper had no valid model responses
+            return None
+        # Not a wrapper — return it directly (already the model JSON)
+        return parsed
 
-    # 3) Brute-force
+    # Not valid JSON at all — brute-force extract first {...} block
     try:
         start = raw.index("{")
         end = raw.rindex("}") + 1

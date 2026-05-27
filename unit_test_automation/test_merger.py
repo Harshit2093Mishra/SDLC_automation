@@ -218,3 +218,50 @@ def remove_tests_for_source(test_path: Path, source_path: str) -> bool:
     body = "\n\n".join(b.text.rstrip("\n") for b in kept_blocks)
     test_path.write_text(header.rstrip("\n") + "\n\n" + body + "\n")
     return True
+
+
+def remove_tests_by_key(test_path: Path, keys_to_remove: list[str]) -> bool:
+    """
+    Remove specific test blocks from *test_path* by their ``Suite.Name`` key.
+
+    Used when the LLM reports ``tests_to_remove`` for functions that were
+    renamed or deleted in the MR.
+
+    Returns ``True`` if any blocks were removed.
+    """
+    if not test_path.exists() or not keys_to_remove:
+        return False
+
+    keys_set = set(keys_to_remove)
+    text = test_path.read_text()
+    blocks = extract_test_blocks(text)
+
+    blocks_to_remove = {b.key for b in blocks if b.key in keys_set}
+    if not blocks_to_remove:
+        return False
+
+    kept_blocks = [b for b in blocks if b.key not in blocks_to_remove]
+    print(f"  [CLEANUP] Removing stale test blocks: {sorted(blocks_to_remove)}")
+
+    # Build a set of block texts that should be removed
+    texts_to_remove = {b.text for b in blocks if b.key in blocks_to_remove}
+
+    # Strip all known test block texts from the file to get the "header" portion
+    # (includes, usings, namespace declarations, etc.)
+    stripped = text
+    for block_text in texts_to_remove:
+        stripped = stripped.replace(block_text, "")
+
+    header = stripped.rstrip("\n")
+
+    if not kept_blocks:
+        if not header.strip():
+            test_path.unlink()
+            print(f"  [INFO] Deleted empty test file {test_path}")
+            return True
+        test_path.write_text(header + "\n")
+        return True
+
+    body = "\n\n".join(b.text.rstrip("\n") for b in kept_blocks)
+    test_path.write_text(header.rstrip("\n") + "\n\n" + body + "\n")
+    return True
