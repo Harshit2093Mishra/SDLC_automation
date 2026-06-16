@@ -29,12 +29,7 @@ namespace example
     {
         return value % 2 == 0;
     }
-
-    bool Calculator::is_chomu(std::string manager)
-    {
-        return manager == "Raju";
-    }
-
+    
     int Calculator::minEatingSpeed(std::vector<int> &piles, int h)
     {
         int low = 1;

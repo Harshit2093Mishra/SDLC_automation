@@ -7,6 +7,9 @@ Key design:
   shell quoting / read-splitting bugs.
 * The bash script (run_prompt_eval.sh) is kept only for manual
   standalone debugging.
+
+Required:
+* Install the gh-models extension: gh extension install github/gh-models
 """
 from __future__ import annotations
 
