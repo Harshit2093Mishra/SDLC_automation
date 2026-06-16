@@ -7,12 +7,13 @@ TEST(Calculator, add_positiveNumbers) {
 
 TEST(Calculator, safe_divide_nonZeroDenominator) {
     auto result = example::Calculator::safe_divide(10.0, 2.0);
-    EXPECT_DOUBLE_EQ(result, 5.0);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_DOUBLE_EQ(result.value(), 5.0);
 }
 
 TEST(Calculator, safe_divide_zeroDenominator) {
     auto result = example::Calculator::safe_divide(10.0, 0.0);
-    EXPECT_TRUE(std::isnan(result));
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST(Calculator, is_even_evenNumber) {
