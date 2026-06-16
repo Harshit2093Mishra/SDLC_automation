@@ -2,7 +2,7 @@ name: C++ Build Fixer
 description: >
   Given CMake build output for a C++ project, propose minimal, safe source
   edits to fix compilation errors. Return strict JSON only.
-model: openai/gpt-4o-mini
+model: deepseek/deepseek-r1
 modelParameters:
   temperature: 0.0
 messages:
